@@ -1,0 +1,9 @@
+/target
+/dist
+*.deb
+*.rpm
+*.tar.gz
+Cargo.lock.bak
+.idea/
+.vscode/
+*.swp
