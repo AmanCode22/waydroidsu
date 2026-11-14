@@ -186,8 +186,8 @@ pub fn extract_zip_assets(archive: &Path, dest_dir: &Path, prefix: &str) -> Resu
             Ok(z) => z,
             Err(_) => continue,
         };
-        let name = match zf.name() {
-            n if n.starts_with(prefix) && !n.ends_with('/') => n.to_string(),
+        let name = match zf.name().map(|n| n.into_owned()) {
+            Ok(n) if n.starts_with(prefix) && !n.ends_with('/') => n,
             _ => continue,
         };
         let base = name.rsplit('/').next().unwrap_or_default().to_string();
