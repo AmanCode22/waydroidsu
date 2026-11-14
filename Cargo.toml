@@ -2,7 +2,7 @@
 name = "waydroidsu"
 version = "2.0.0"
 edition = "2021"
-rust-version = "1.74"
+rust-version = "1.88"
 description = "WaydroidSU (wsu) — CLI KitsuneMagisk installer, root, module & superuser manager for Waydroid"
 license = "GPL-3.0"
 authors = ["AmanCode22 <amanady125@gmail.com>"]

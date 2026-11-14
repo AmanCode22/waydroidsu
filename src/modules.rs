@@ -221,7 +221,7 @@ pub fn install(c: &Container, source: &str) -> Result<()> {
     let dest = format!("{CONTAINER_TMP}/wsu-module.zip");
     push_file_to_container(&zip, &dest)?;
     let (ok, out) = c.magisk_cli_try(&["--install-module", &dest]);
-    println!("{}", out);
+    println!("{out}");
     let _ = c.shell_try(&["rm", "-f", &dest]);
     if !ok {
         bail!("module installation failed");

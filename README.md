@@ -53,7 +53,7 @@ sudo apt install ./waydroidsu_*_amd64.deb
 sudo dnf install ./waydroidsu-*_64bit.rpm   # naming: waydroidsu-<ver>-1.x86_64.rpm
 ```
 
-**From source** (needs Rust 1.74+, see install.sh):
+**From source** (needs Rust 1.88+, see install.sh):
 
 ```bash
 sudo ./install.sh

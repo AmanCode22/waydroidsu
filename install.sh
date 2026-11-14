@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # WaydroidSU (wsu) installer — builds from source and installs the wsu binary.
-# Needs: cargo (Rust 1.74+). Run: sudo ./install.sh
+# Needs: cargo (Rust 1.88+). Run: sudo ./install.sh
 set -euo pipefail
 
 if ! command -v cargo >/dev/null 2>&1; then

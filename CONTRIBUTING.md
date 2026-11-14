@@ -5,7 +5,7 @@ testing, packaging and the conventions used in this repository.
 
 ## Getting started
 
-Requirements: Rust 1.74+ (via [rustup](https://rustup.rs)), `curl`, and — for
+Requirements: Rust 1.88+ (via [rustup](https://rustup.rs)), `curl`, and — for
 anything beyond unit tests — a machine with [Waydroid](https://waydroid.org) installed.
 
 ```bash
@@ -67,7 +67,7 @@ Deb/rpm metadata lives in `Cargo.toml` under `[package.metadata.deb]` and
 
 - Conventional commits: `feat:`, `fix:`, `docs:`, `build:`, `ci:`, `refactor:`, `test:`.
 - One logical change per commit; keep `Cargo.lock` in sync when you touch dependencies.
-- Open PRs against `main` using the PR template; make sure the CI matrix (stable + 1.74)
+- Open PRs against `main` using the PR template; make sure the CI matrix (stable + 1.88)
   is green.
 - Dependabot opens weekly `cargo` and `github-actions` PRs — they follow the same review
   rules; group-bumped minor/patch PRs can be merged without a Waydroid re-test if CI is green.
