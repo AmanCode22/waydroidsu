@@ -148,24 +148,42 @@ pub fn app_list(c: &Container, third_party: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn app_install(c: &Container, apk: &std::path::Path) -> Result<()> {
+/// Install one or more APKs from the HOST into Waydroid. Fails only at the
+/// end if any APK could not be installed, so globs keep working.
+pub fn app_install(c: &Container, apks: &[std::path::PathBuf]) -> Result<()> {
     c.require()?;
     require_root()?;
-    if !apk.exists() {
-        bail!("APK not found: {}", apk.display());
-    }
     if !c.container_running() {
         c.start_container()?;
     }
-    let dest = format!("{CONTAINER_TMP}/wsu-app.apk");
-    push_file_to_container(apk, &dest)?;
-    let (ok, out) = c.shell_try(&["pm", "install", "-r", &dest]);
-    println!("{out}");
-    let _ = c.shell_try(&["rm", "-f", &dest]);
-    if !ok {
-        bail!("pm install failed");
+    let mut failed: Vec<String> = Vec::new();
+    for apk in apks {
+        if !apk.exists() {
+            msg_warn(&format!("{} skipped (file not found)", apk.display()));
+            failed.push(apk.display().to_string());
+            continue;
+        }
+        msg_main(&format!("installing {}", apk.display()));
+        let dest = format!("{CONTAINER_TMP}/wsu-app.apk");
+        let res = push_file_to_container(apk, &dest).and_then(|()| {
+            let (ok, out) = c.shell_try(&["pm", "install", "-r", &dest]);
+            if !out.trim().is_empty() {
+                println!("{out}");
+            }
+            if ok { Ok(()) } else { bail!("pm install failed") }
+        });
+        let _ = c.shell_try(&["rm", "-f", &dest]);
+        match res {
+            Ok(()) => msg_ok(&format!("{} installed", apk.display())),
+            Err(e) => {
+                msg_warn(&format!("{} failed: {e:#}", apk.display()));
+                failed.push(apk.display().to_string());
+            }
+        }
     }
-    msg_ok("app installed");
+    if !failed.is_empty() {
+        bail!("{} of {} APK(s) failed: {}", failed.len(), apks.len(), failed.join(", "));
+    }
     Ok(())
 }
 
@@ -185,6 +203,9 @@ pub fn app_uninstall(c: &Container, pkg: &str) -> Result<()> {
 pub fn manager_install(c: &Container) -> Result<()> {
     c.require()?;
     require_root()?;
+    if !c.container_running() {
+        c.start_container()?;
+    }
     let cached = std::path::PathBuf::from(WSU_STATE_DIR).join(APK_ASSET);
     if cached.exists() {
         install_manager_apk(c, &cached)

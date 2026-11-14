@@ -238,7 +238,7 @@ pub fn push_file_to_container(local: &Path, container_dest: &str) -> Result<()> 
     let size = std::fs::metadata(local)?.len();
     // 1) stdin pipe
     let child = Command::new("waydroid")
-        .args(["shell", "sh", "-c", &format!("cat > {container_dest}")])
+        .args(["shell", "--", "sh", "-c", &format!("cat > {container_dest}")])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -267,7 +267,7 @@ pub fn push_file_to_container(local: &Path, container_dest: &str) -> Result<()> 
     for chunk in chunk_str(&b64, 60_000) {
         let (ok, err) = run_try(
             "waydroid",
-            &["shell", "sh", "-c", &format!("printf '%s' '{chunk}' >> {container_dest}.b64")],
+            &["shell", "--", "sh", "-c", &format!("printf '%s' '{chunk}' >> {container_dest}.b64")],
         );
         if !ok {
             bail!("failed to transfer module into container: {err}");
@@ -275,7 +275,7 @@ pub fn push_file_to_container(local: &Path, container_dest: &str) -> Result<()> 
     }
     let (ok, err) = run_try(
         "waydroid",
-        &["shell", "sh", "-c", &format!("base64 -d {container_dest}.b64 > {container_dest} && rm -f {container_dest}.b64")],
+        &["shell", "--", "sh", "-c", &format!("base64 -d {container_dest}.b64 > {container_dest} && rm -f {container_dest}.b64")],
     );
     if !ok {
         bail!("base64 decode inside container failed: {err}");
@@ -290,12 +290,12 @@ pub fn push_file_to_container(local: &Path, container_dest: &str) -> Result<()> 
 }
 
 fn container_file_size(path: &str) -> Result<u64> {
-    let out = run_out("waydroid", &["shell", "stat", "-c", "%s", path])?;
+    let out = run_out("waydroid", &["shell", "--", "stat", "-c", "%s", path])?;
     out.trim().parse::<u64>().map_err(|e| anyhow!("stat parse: {e}"))
 }
 
 pub fn cleanup_container_path(path: &str) {
-    let _ = run_try("waydroid", &["shell", "rm", "-f", path]);
+    let _ = run_try("waydroid", &["shell", "--", "rm", "-f", path]);
 }
 
 fn chunk_str(s: &str, n: usize) -> Vec<&str> {

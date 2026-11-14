@@ -203,9 +203,11 @@ pub enum AppCmd {
         #[arg(long)]
         third_party: bool,
     },
-    /// Install an APK from the HOST into Waydroid
+    /// Install APKs from the HOST into Waydroid (multiple paths OK)
     Install {
-        apk: PathBuf,
+        /// .apk file(s) to install
+        #[arg(required = true, num_args = 1..)]
+        apk: Vec<PathBuf>,
     },
     /// Uninstall a package
     Uninstall {

@@ -120,11 +120,14 @@ pub fn uid_of_package(pm_out: &str, pkg: &str) -> Option<i64> {
 fn patch_bootanim_rc(sys: &Path) -> Result<()> {
     let init_dir = sys.join("etc/init");
     std::fs::create_dir_all(&init_dir)?;
-    let rc_plain = init_dir.join(BOOTANIM_RC_REL);
-    let rc_gz = init_dir.join(BOOTANIM_RC_GZ_REL);
+    // The *_REL constants are relative to the SYSTEM ROOT (they carry their
+    // own etc/init/ prefix), so they must be joined onto `sys`. Joining them
+    // onto init_dir doubles the prefix and points outside the overlay tree.
+    let rc_plain = sys.join(BOOTANIM_RC_REL);
+    let rc_gz = sys.join(BOOTANIM_RC_GZ_REL);
 
     if rc_plain.exists() {
-        let backup = init_dir.join(format!("{BOOTANIM_RC_REL}{RC_BACKUP_SUFFIX}"));
+        let backup = sys.join(format!("{BOOTANIM_RC_REL}{RC_BACKUP_SUFFIX}"));
         if !backup.exists() {
             std::fs::copy(&rc_plain, &backup)?;
             chown_root(&backup);
@@ -146,7 +149,7 @@ fn patch_bootanim_rc(sys: &Path) -> Result<()> {
     }
 
     if rc_gz.exists() {
-        let backup = init_dir.join(format!("{BOOTANIM_RC_GZ_REL}{RC_BACKUP_SUFFIX}"));
+        let backup = sys.join(format!("{BOOTANIM_RC_GZ_REL}{RC_BACKUP_SUFFIX}"));
         if !backup.exists() {
             std::fs::copy(&rc_gz, &backup)?;
             chown_root(&backup);
@@ -162,7 +165,7 @@ fn patch_bootanim_rc(sys: &Path) -> Result<()> {
         std::fs::write(&rc_plain, format!("{out}\n{RC_BLOCK}"))?;
         set_mode(&rc_plain, 0o644)?;
         chown_root(&rc_plain);
-        let side = init_dir.join(format!("{BOOTANIM_RC_GZ_REL}{RC_BACKUP_SUFFIX}"));
+        let side = sys.join(format!("{BOOTANIM_RC_GZ_REL}{RC_BACKUP_SUFFIX}"));
         std::fs::rename(&rc_gz, &side)?;
         return Ok(());
     }
@@ -175,12 +178,12 @@ fn patch_bootanim_rc(sys: &Path) -> Result<()> {
 }
 
 fn restore_bootanim_rc(sys: &Path) {
-    let init_dir = sys.join("etc/init");
-    let rc_plain = init_dir.join(BOOTANIM_RC_REL);
-    let rc_gz = init_dir.join(BOOTANIM_RC_GZ_REL);
+    // joined onto sys — see patch_bootanim_rc
+    let rc_plain = sys.join(BOOTANIM_RC_REL);
+    let rc_gz = sys.join(BOOTANIM_RC_GZ_REL);
     // Case: we created a fresh rc (no original existed).
-    let plain_bak = init_dir.join(format!("{BOOTANIM_RC_REL}{RC_BACKUP_SUFFIX}"));
-    let gz_bak = init_dir.join(format!("{BOOTANIM_RC_GZ_REL}{RC_BACKUP_SUFFIX}"));
+    let plain_bak = sys.join(format!("{BOOTANIM_RC_REL}{RC_BACKUP_SUFFIX}"));
+    let gz_bak = sys.join(format!("{BOOTANIM_RC_GZ_REL}{RC_BACKUP_SUFFIX}"));
     if !plain_bak.exists() && rc_plain.exists() {
         let _ = std::fs::remove_file(&rc_plain);
     }

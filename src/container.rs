@@ -10,6 +10,19 @@ fn magisk_exec_script() -> String {
     format!("MAGISKTMP={CONTAINER_MAGISK_TMP} exec {CONTAINER_MAGISK_BIN} \"$@\"")
 }
 
+/// Build the argv for `waydroid shell ...`. waydroid's argparse treats any
+/// container-side argument starting with '-' as one of its own options (the
+/// shell subparser even defines real -u/-g/-s/-L/-C/-G flags), so `waydroid
+/// shell sh -ec ...` dies with "unrecognized arguments". A `--` separator
+/// makes argparse hand everything after it to COMMAND, which upstream
+/// forwards verbatim to `lxc-attach ... --` (verified against 1.4.2 and
+/// master/1.6.x).
+fn shell_cmd<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut all: Vec<&'a str> = vec!["shell", "--"];
+    all.extend_from_slice(args);
+    all
+}
+
 /// Minimal waydroid container interface.
 pub struct Container {
     pub present: bool,
@@ -29,18 +42,35 @@ impl Container {
         Ok(())
     }
 
+    /// `waydroid status` reports no usable container (STOPPED, or waydroid
+    /// not initialized). FROZEN counts as usable — `waydroid shell` unfreezes.
+    pub fn container_stopped(&self) -> bool {
+        match self
+            .status_text()
+            .lines()
+            .find(|l| l.starts_with("Container:"))
+        {
+            Some(l) => !l.contains("RUNNING") && !l.contains("FROZEN"),
+            None => true,
+        }
+    }
+
+    fn require_running(&self) -> Result<()> {
+        if self.container_stopped() {
+            bail!("Waydroid container is not running — start it first (e.g. `waydroid show-full-ui` or `sudo wsu restart`)");
+        }
+        Ok(())
+    }
+
     /// `waydroid shell <args...>` — runs inside the container as root.
     pub fn shell(&self, args: &[&str]) -> Result<String> {
         self.require()?;
-        let mut all = vec!["shell"];
-        all.extend_from_slice(args);
-        run_out("waydroid", &all)
+        self.require_running()?;
+        run_out("waydroid", &shell_cmd(args))
     }
 
     pub fn shell_try(&self, args: &[&str]) -> (bool, String) {
-        let mut all = vec!["shell"];
-        all.extend_from_slice(args);
-        run_try("waydroid", &all)
+        run_try("waydroid", &shell_cmd(args))
     }
 
     /// Run a daemon CLI command with MAGISKTMP pinned to /sbin.
@@ -48,17 +78,20 @@ impl Container {
     /// SQL statements and paths survive without quoting problems.
     pub fn magisk_cli(&self, args: &[&str]) -> Result<String> {
         self.require()?;
+        self.require_running()?;
         let script = magisk_exec_script();
-        let mut all = vec!["shell", "sh", "-ec", &script, "magisk"];
+        let mut all: Vec<&str> = vec!["shell", "--", "sh", "-ec", &script, "magisk"];
         all.extend_from_slice(args);
         run_out("waydroid", &all)
     }
 
     pub fn magisk_cli_try(&self, args: &[&str]) -> (bool, String) {
         let script = magisk_exec_script();
-        let mut all = vec!["shell", "sh", "-ec", &script, "magisk"];
+        let mut all: Vec<&str> = vec!["shell", "--", "sh", "-ec", &script, "magisk"];
         all.extend_from_slice(args);
-        self.shell_try(&all)
+        // NOTE: run_try directly — calling shell_try here would prepend a
+        // second "shell" token (it already builds `waydroid shell -- ...`).
+        run_try("waydroid", &all)
     }
 
     /// Raw container status output from `waydroid status`.
