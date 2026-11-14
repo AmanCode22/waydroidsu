@@ -16,7 +16,9 @@ use crate::utils::*;
 //   magisk --sqlite "replace into settings (key,value) values('zygisk',1|0)"
 //   magisk --sqlite "replace into settings (key,value) values('sulist',1|0)"
 fn require_daemon(c: &Container) -> Result<()> {
-    let (daemon_ok, _) = c.magisk_cli_try(&["-c"]);
+    // `-v` queries the running daemon; `-c` only prints the staged binary's
+    // version and would succeed even with the daemon down.
+    let (daemon_ok, _) = c.magisk_cli_try(&["-v"]);
     if !daemon_ok {
         bail!("magisk daemon not reachable — boot Waydroid (sudo wsu restart) and run `sudo wsu setup`");
     }

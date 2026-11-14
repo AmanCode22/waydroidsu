@@ -141,7 +141,9 @@ fn status(c: &Container) -> Result<()> {
     }
 
     if c.container_running() {
-        let (ok, ver) = c.magisk_cli_try(&["-c"]);
+        // `-v` queries the running daemon (fails when it is down); `-c`
+        // prints the staged binary's version and always succeeds.
+        let (ok, ver) = c.magisk_cli_try(&["-v"]);
         if ok {
             println!("  daemon    : {}", ver.bright_green());
             if let Ok(s) = hide::settings(c) {

@@ -126,11 +126,13 @@ pub fn revoke(c: &Container, pkg: &str) -> Result<()> {
     Ok(())
 }
 
-/// Run a command inside the container through the su applet (uid 0 via daemon).
+/// Run a command inside the container through the su applet (uid 0 via
+/// daemon). Routed through magisk_cli: `su` is not on the container's PATH —
+/// it is a symlink inside the magisk runtime dir — and the bare `su` call
+/// could never resolve it.
 pub fn run_su(c: &Container, cmd: &[String]) -> Result<()> {
     c.require()?;
-    let joined = cmd.join(" ");
-    let out = c.shell(&["su", "-c", &joined])?;
+    let out = c.magisk_cli(&["su", "-c", &cmd.join(" ")])?;
     println!("{out}");
     Ok(())
 }

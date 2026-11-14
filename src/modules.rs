@@ -212,7 +212,8 @@ pub fn install(c: &Container, source: &str) -> Result<()> {
     if !c.container_running() {
         c.start_container()?;
     }
-    let (daemon_ok, _) = c.magisk_cli_try(&["-c"]);
+    // `-v` queries the running daemon; `-c` only prints the binary version.
+    let (daemon_ok, _) = c.magisk_cli_try(&["-v"]);
     if !daemon_ok {
         bail!("magisk daemon is not reachable inside the container (boot Waydroid and run `sudo wsu setup` first)");
     }

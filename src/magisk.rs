@@ -303,6 +303,37 @@ pub fn install(c: &Container, apk: Option<PathBuf>, abi: Option<String>, auto_ye
     Ok(())
 }
 
+/// Run the bootstrap inside the container from the host. Used when the rc
+/// triggers did not fire (first boot right after install, an image whose
+/// SELinux policy refused the exec, or an already-running container). Mirrors
+/// the fork's live_setup.sh: stop the framework, run prepare + post-fs-data
+/// so the daemon and zygisk attach BEFORE zygote, restart the framework, then
+/// finish the service/boot-complete stages.
+fn bootstrap_live(c: &Container) -> Result<()> {
+    let boot = format!("{CONTAINER_PAYLOAD}/wsu_boot.sh");
+    msg_sub("stopping the Android framework so the daemon attaches before zygote");
+    let _ = c.shell_try(&["stop"]);
+    for stage in ["prepare", "post-fs-data"] {
+        let (ok, out) = c.shell_try(&["sh", &boot, stage]);
+        if !ok {
+            bail!("bootstrap stage `{stage}` failed: {}", if out.is_empty() { "no output".into() } else { out });
+        }
+        msg_ok(&format!("bootstrap stage {stage}"));
+    }
+    msg_sub("restarting the Android framework (zygisk hooks the fresh zygote)");
+    let _ = c.shell_try(&["start"]);
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    for stage in ["service", "boot-complete"] {
+        let (ok, out) = c.shell_try(&["sh", &boot, stage]);
+        if ok {
+            msg_ok(&format!("bootstrap stage {stage}"));
+        } else {
+            msg_warn(&format!("bootstrap stage `{stage}` failed: {out}"));
+        }
+    }
+    Ok(())
+}
+
 pub fn setup(c: &Container, _auto_yes: bool) -> Result<()> {
     c.require()?;
     if !c.is_installed() {
@@ -326,16 +357,34 @@ pub fn setup(c: &Container, _auto_yes: bool) -> Result<()> {
     }
     msg_ok("boot completed");
 
-    msg_main("verifying Kitsune daemon");
-    let (sbin_ok, _) = c.shell_try(&["test", "-x", CONTAINER_MAGISK_BIN]);
-    if !sbin_ok {
-        bail!("{CONTAINER_MAGISK_BIN} not present — the rc bootstrap did not run; check `sudo wsu status`");
+    // The payload lives in the host overlay; verify the container actually
+    // sees it (overlayfs lower layer) before anything else.
+    let (vis, ls) = c.shell_try(&["ls", CONTAINER_PAYLOAD]);
+    if !vis || !ls.split_whitespace().any(|f| f == "magisk") {
+        bail!(
+            "{CONTAINER_PAYLOAD}/magisk is not visible inside the container — \
+             the waydroid overlay did not apply. Restart the container \
+             (`sudo wsu restart`) so waydroid remounts the rootfs, then rerun setup"
+        );
     }
-    let (ok, ver) = c.magisk_cli_try(&["-c"]);
+
+    msg_main("verifying Kitsune daemon");
+    // `-v` asks the RUNNING daemon (needs it up); `-c` would only print the
+    // staged binary's version and always succeeds.
+    let (ok, ver) = c.magisk_cli_try(&["-v"]);
     if ok {
         msg_ok(&format!("daemon running: {ver}"));
     } else {
-        msg_warn(&format!("daemon not reachable yet ({ver}) — a container restart may be needed"));
+        msg_sub("rc bootstrap has not run yet — running it from the host");
+        bootstrap_live(c)?;
+        let (ok2, ver2) = c.magisk_cli_try(&["-v"]);
+        if !ok2 {
+            bail!(
+                "bootstrap finished but the daemon is still not reachable ({ver2}) — \
+                 check `sudo waydroid shell getenforce` and `sudo waydroid shell dmesg | tail -50`"
+            );
+        }
+        msg_ok(&format!("daemon running: {ver2}"));
     }
     print_features(c);
 

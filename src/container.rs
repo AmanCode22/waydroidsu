@@ -4,23 +4,52 @@ use std::path::PathBuf;
 use crate::constants::*;
 use crate::utils::*;
 
-/// sh snippet: exec the magisk CLI with MAGISKTMP pinned to the container's
-/// /sbin, forwarding "$@" untouched.
-fn magisk_exec_script() -> String {
-    format!("MAGISKTMP={CONTAINER_MAGISK_TMP} exec {CONTAINER_MAGISK_BIN} \"$@\"")
-}
+/// sh script wrapper for generic container commands. `waydroid shell` execs
+/// lxc-attach through subprocess.run() and DISCARDS the child exit status
+/// (waydroid tools/helpers/lxc.py), so success/failure must be detected by
+/// parsing an explicit marker line the script prints after the command.
+const SHELL_RC_SCRIPT: &str = "\"$@\"\n__wsu_rc=$?\necho \"__WSU_RC=$__wsu_rc\"";
 
-/// Build the argv for `waydroid shell ...`. waydroid's argparse treats any
-/// container-side argument starting with '-' as one of its own options (the
-/// shell subparser even defines real -u/-g/-s/-L/-C/-G flags), so `waydroid
-/// shell sh -ec ...` dies with "unrecognized arguments". A `--` separator
-/// makes argparse hand everything after it to COMMAND, which upstream
-/// forwards verbatim to `lxc-attach ... --` (verified against 1.4.2 and
-/// master/1.6.x).
-fn shell_cmd<'a>(args: &[&'a str]) -> Vec<&'a str> {
-    let mut all: Vec<&'a str> = vec!["shell", "--"];
-    all.extend_from_slice(args);
-    all
+/// sh script wrapper for daemon CLI commands. The runtime dir is autodetected
+/// with the same rule as KitsuneMagisk live_setup.sh: /sbin when the image has
+/// one, /debug_ramdisk otherwise (Q+ images ship no /sbin). Args are passed as
+/// separate argv entries and re-expanded via "$@" so SQL statements and paths
+/// survive without quoting problems.
+const MAGISK_RC_SCRIPT: &str = "\
+if [ -x /sbin/magisk ]; then
+  __wsu_mt=/sbin
+elif [ -x /debug_ramdisk/magisk ]; then
+  __wsu_mt=/debug_ramdisk
+elif [ -d /sbin ] && [ ! -L /sbin ]; then
+  __wsu_mt=/sbin
+else
+  __wsu_mt=/debug_ramdisk
+fi
+if [ ! -x \"$__wsu_mt/magisk\" ]; then
+  echo \"magisk binary not found in container (checked /sbin/magisk, /debug_ramdisk/magisk)\"
+  echo \"__WSU_RC=127\"
+else
+  MAGISKTMP=\"$__wsu_mt\" \"$__wsu_mt/magisk\" \"$@\"
+  echo \"__WSU_RC=$?\"
+fi";
+
+/// Strip the exit-code marker from container output; returns (ok, output).
+/// Without a marker the waydroid layer failed outright (or output was empty).
+fn parse_rc_out(text: &str) -> (bool, String) {
+    let mut rc: Option<i64> = None;
+    let mut out = String::new();
+    for line in text.lines() {
+        if let Some(v) = line.trim().strip_prefix("__WSU_RC=") {
+            rc = v.trim().parse::<i64>().ok();
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    match rc {
+        Some(r) => (r == 0, out.trim().to_string()),
+        None => (false, text.trim().to_string()),
+    }
 }
 
 /// Minimal waydroid container interface.
@@ -63,35 +92,47 @@ impl Container {
     }
 
     /// `waydroid shell <args...>` — runs inside the container as root.
+    /// waydroid's argparse treats any container-side argument starting with
+    /// '-' as one of its own options (the shell subparser even defines real
+    /// -u/-g/-s/-L/-C/-G flags), so a `--` separator is always inserted:
+    /// everything after it reaches lxc-attach verbatim (verified against
+    /// waydroid 1.4.2 and master/1.6.x).
     pub fn shell(&self, args: &[&str]) -> Result<String> {
         self.require()?;
         self.require_running()?;
-        run_out("waydroid", &shell_cmd(args))
+        let (ok, out) = self.shell_try(args);
+        if !ok {
+            bail!("container command failed: {}", if out.is_empty() { "no output".into() } else { out });
+        }
+        Ok(out)
     }
 
     pub fn shell_try(&self, args: &[&str]) -> (bool, String) {
-        run_try("waydroid", &shell_cmd(args))
+        let mut all: Vec<&str> = vec!["shell", "--", "sh", "-c", SHELL_RC_SCRIPT, "wsu"];
+        all.extend_from_slice(args);
+        let (_, out) = run_try("waydroid", &all);
+        parse_rc_out(&out)
     }
 
-    /// Run a daemon CLI command with MAGISKTMP pinned to /sbin.
-    /// Args are passed as separate argv entries and re-expanded via "$@" so
-    /// SQL statements and paths survive without quoting problems.
+    /// Run a daemon CLI command with MAGISKTMP autodetected inside the
+    /// container. Fails when the magisk binary is absent or the command exits
+    /// non-zero (detected via the rc marker, since waydroid swallows exit
+    /// codes).
     pub fn magisk_cli(&self, args: &[&str]) -> Result<String> {
         self.require()?;
         self.require_running()?;
-        let script = magisk_exec_script();
-        let mut all: Vec<&str> = vec!["shell", "--", "sh", "-ec", &script, "magisk"];
-        all.extend_from_slice(args);
-        run_out("waydroid", &all)
+        let (ok, out) = self.magisk_cli_try(args);
+        if !ok {
+            bail!("{}", if out.is_empty() { "magisk command failed".to_string() } else { out });
+        }
+        Ok(out)
     }
 
     pub fn magisk_cli_try(&self, args: &[&str]) -> (bool, String) {
-        let script = magisk_exec_script();
-        let mut all: Vec<&str> = vec!["shell", "--", "sh", "-ec", &script, "magisk"];
+        let mut all: Vec<&str> = vec!["shell", "--", "sh", "-c", MAGISK_RC_SCRIPT, "magisk"];
         all.extend_from_slice(args);
-        // NOTE: run_try directly — calling shell_try here would prepend a
-        // second "shell" token (it already builds `waydroid shell -- ...`).
-        run_try("waydroid", &all)
+        let (_, out) = run_try("waydroid", &all);
+        parse_rc_out(&out)
     }
 
     /// Raw container status output from `waydroid status`.
@@ -205,4 +246,46 @@ pub fn cfg_lookup(cfg: &str, section: &str, key: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_rc_out_success() {
+        let (ok, out) = parse_rc_out("package:foo uid:10100\n__WSU_RC=0\n");
+        assert!(ok);
+        assert_eq!(out, "package:foo uid:10100");
+    }
+
+    #[test]
+    fn test_parse_rc_out_failure() {
+        let (ok, out) = parse_rc_out("pm: not found\n__WSU_RC=1\n");
+        assert!(!ok);
+        assert_eq!(out, "pm: not found");
+    }
+
+    #[test]
+    fn test_parse_rc_out_missing_marker_means_failed_layer() {
+        // waydroid itself failed (no marker printed) — must not read as success
+        let (ok, _) = parse_rc_out("some stale output");
+        assert!(!ok);
+    }
+
+    #[test]
+    fn test_parse_rc_out_marker_in_error_text() {
+        let (ok, out) = parse_rc_out("magisk binary not found in container\n__WSU_RC=127\n");
+        assert!(!ok);
+        assert!(out.contains("not found"));
+    }
+
+    /// The two wrapper scripts must be parseable POSIX sh.
+    #[test]
+    fn test_wrapper_scripts_syntax() {
+        for s in [SHELL_RC_SCRIPT, MAGISK_RC_SCRIPT, crate::constants::WSU_BOOT_SH] {
+            let (ok, err) = run_try("sh", &["-n", "-c", s]);
+            assert!(ok, "sh -n rejected script: {err}");
+        }
+    }
 }
